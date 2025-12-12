@@ -1,4 +1,11 @@
 # app.py
+"""
+ This File Shows all the functions and codes for making a fully interactive Streamlit dashboard ,
+ Which can be used by users who cannot understand coding languages.
+
+ Author: Vishank
+Created: 8 December 2025
+"""
 import os, datetime, numpy as np, pandas as pd, streamlit as st
 from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import mean_absolute_error

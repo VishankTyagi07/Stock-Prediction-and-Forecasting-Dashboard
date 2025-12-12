@@ -1,4 +1,12 @@
 # ticker_utils.py
+"""
+ This File Shows all the functions and codes for Collecting all the types of markets data,
+ Which are to be used later for visualization and analysis.
+ 
+
+ Author: Vishank
+Created: 5 December 2025
+"""
 import requests
 import yfinance as yf
 import pandas as pd

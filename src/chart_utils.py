@@ -1,4 +1,11 @@
 # chart_utils.py
+"""
+ This File Shows all the functions and codes for making callable functions,
+ Which can be used in other application file to make visual plots for the data.
+
+ Author: Vishank
+Created: 7 December 2025
+"""
 import plotly.graph_objs as go
 import pandas as pd
 

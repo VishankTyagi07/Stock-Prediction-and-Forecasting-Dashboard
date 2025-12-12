@@ -1,4 +1,11 @@
 # model_utils.py
+"""
+ This File Shows all the functions and codes for making a model using ensemble apporach,
+ Which can be used by other files to call the model to use enter data in to make analysis.
+
+ Author: Vishank
+Created: 6 December 2025
+"""
 import numpy as np
 import pandas as pd
 from typing import Tuple, List
