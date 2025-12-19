@@ -171,26 +171,42 @@ fig_test = plot_clean_combined(df_work[["High","Low","Close"]], pd.DataFrame({
 }, index=df_test_plot.index).iloc[-60:], lookback=60, title="Test: Actual (recent) vs Ensemble")
 st.plotly_chart(fig_test, width='stretch')
 
-# Forecast multi-day autoregressive with full indicator updates
+# HOSTED-READY MULTI-DAY FORECAST
 st.write(f"### 🔮 Forecast for next {forecast_days} business days")
+
+# Ensure models are stored in session_state
+if "tcn_model" not in st.session_state or "blstm_model" not in st.session_state or "gbr_models" not in st.session_state:
+    st.session_state.tcn_model = tcn_model
+    st.session_state.blstm_model = blstm_model
+    st.session_state.gbr_models = gbr_models
+
 raw_features_df = features.copy().reset_index(drop=True)
 current_seq = features_scaled.values[-SEQ_LEN:].copy()
 future_preds = []
 
+# Make sure index is datetime
+df_work.index = pd.to_datetime(df_work.index)
+
 for step in range(forecast_days):
+    
     # 1. Sequence model prediction
     seq_in = current_seq.reshape(1, SEQ_LEN, current_seq.shape[1])
-    p_tcn_s = tcn_model.predict(seq_in, verbose=0)
-    p_blstm_s = blstm_model.predict(seq_in, verbose=0)
+    try:
+        p_tcn_s = st.session_state.tcn_model.predict(seq_in, verbose=0)
+        p_blstm_s = st.session_state.blstm_model.predict(seq_in, verbose=0)
+    except Exception as e:
+        st.warning(f"Prediction failed at step {step}: {e}")
+        break
+
     p_tcn = scaler_y.inverse_transform(p_tcn_s)[0]
     p_blstm = scaler_y.inverse_transform(p_blstm_s)[0]
     p_ensemble = 0.55 * p_tcn + 0.45 * p_blstm
 
-    # 2. GB tabular correction
+    # GB tabular correction
     latest_lags = build_lag_features(raw_features_df).iloc[[-1]]
     if not latest_lags.empty:
         gpreds = []
-        for g in gbr_models:
+        for g in st.session_state.gbr_models:
             try:
                 gpreds.append(g.predict(latest_lags)[0])
             except Exception:
@@ -205,7 +221,8 @@ for step in range(forecast_days):
 
     future_preds.append(p_final.tolist())
 
-    # 3. Build next raw row with full indicator updates
+   
+    # Build next raw row
     last_row = raw_features_df.iloc[-1].copy()
     ph, pl, pc = float(p_final[0]), float(p_final[1]), float(p_final[2])
     new_row = {}
@@ -215,19 +232,19 @@ for step in range(forecast_days):
     new_row["Close"] = pc
     new_row["Volume"] = last_row["Volume"]
 
-    # Compute returns
-    returns_series = pd.concat([raw_features_df["Close"], pd.Series([pc])], ignore_index=True).pct_change().fillna(0)
-    new_row["Returns"] = returns_series.iloc[-1]
-
-    # Volatility and moving averages
-    new_row["Volatility5"] = returns_series.tail(5).std()
+    # Returns and volatility
     close_series = pd.concat([raw_features_df["Close"], pd.Series([pc])], ignore_index=True)
+    returns_series = close_series.pct_change().fillna(0)
+    new_row["Returns"] = returns_series.iloc[-1]
+    new_row["Volatility5"] = returns_series.tail(5).std()
+
+    # Moving averages
     new_row["MA10"] = close_series.tail(10).mean()
     new_row["MA20"] = close_series.tail(20).mean()
     new_row["EMA9"] = close_series.ewm(span=9, adjust=False).mean().iloc[-1]
-    new_row["Momentum"] = pc - last_row["Close"]
 
-    # RSI
+    # Momentum and RSI
+    new_row["Momentum"] = pc - last_row["Close"]
     delta = close_series.diff().fillna(0)
     gain = delta.clip(lower=0).tail(14).mean()
     loss = (-delta.clip(upper=0)).tail(14).mean()
@@ -249,21 +266,22 @@ for step in range(forecast_days):
     new_row["BB_LOW"] = new_row["BB_MID"] - 2 * new_row["BB_STD"]
     new_row["BB_PCTB"] = (pc - new_row["BB_LOW"]) / (new_row["BB_UP"] - new_row["BB_LOW"] + 1e-12)
 
-    # On-Balance Volume
+    # OBV
     new_row["OBV"] = raw_features_df["OBV"].iloc[-1] + np.sign(pc - last_row["Close"]) * new_row["Volume"]
 
     # Append new row
     raw_features_df = pd.concat([raw_features_df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # Ensure feature columns exist
+    # Ensure all feature columns exist and fill missing
     for c in features.columns:
         if c not in raw_features_df.columns:
             raw_features_df[c] = raw_features_df[c].ffill().bfill()
 
     # Scale new row and update sequence
-    new_row_df = raw_features_df.iloc[[-1]][features.columns]
+    new_row_df = raw_features_df.iloc[[-1]][features.columns].ffill()
     new_row_scaled = scaler_X.transform(new_row_df)
     current_seq = np.vstack([current_seq[1:], new_row_scaled[0]])
+
 
 
 # Build forecast DataFrame
