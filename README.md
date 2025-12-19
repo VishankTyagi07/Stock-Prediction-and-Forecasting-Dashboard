@@ -1,6 +1,6 @@
 # STOCK PREDICTION ANAYSIS AND FORECASTING SYSTEM.
 
->**This is a multimodel deep which uses ensemble approach which is used for showing predictive and forcasting analysis on stock data.**
+>**This is a multimodel deep learning model which uses ensemble approach which is used for showing predictive and forcasting analysis on stock data.**
 
 Images from the project are:
 - StreamLit Dashboard
