@@ -171,49 +171,32 @@ fig_test = plot_clean_combined(df_work[["High","Low","Close"]], pd.DataFrame({
 }, index=df_test_plot.index).iloc[-60:], lookback=60, title="Test: Actual (recent) vs Ensemble")
 st.plotly_chart(fig_test, width='stretch')
 
-# HOSTED-READY MULTI-DAY FORECAST
+# Forecast multi-day autoregressive with lightweight GB adjustment
 st.write(f"### 🔮 Forecast for next {forecast_days} business days")
-
-# Ensure models are stored in session_state
-if "tcn_model" not in st.session_state or "blstm_model" not in st.session_state or "gbr_models" not in st.session_state:
-    st.session_state.tcn_model = tcn_model
-    st.session_state.blstm_model = blstm_model
-    st.session_state.gbr_models = gbr_models
-
 raw_features_df = features.copy().reset_index(drop=True)
 current_seq = features_scaled.values[-SEQ_LEN:].copy()
 future_preds = []
 
-# Make sure index is datetime
-df_work.index = pd.to_datetime(df_work.index)
-
 for step in range(forecast_days):
-    
-    # 1. Sequence model prediction
     seq_in = current_seq.reshape(1, SEQ_LEN, current_seq.shape[1])
-    try:
-        p_tcn_s = st.session_state.tcn_model.predict(seq_in, verbose=0)
-        p_blstm_s = st.session_state.blstm_model.predict(seq_in, verbose=0)
-    except Exception as e:
-        st.warning(f"Prediction failed at step {step}: {e}")
-        break
-
+    p_tcn_s = tcn_model.predict(seq_in)
+    p_blstm_s = blstm_model.predict(seq_in)
     p_tcn = scaler_y.inverse_transform(p_tcn_s)[0]
     p_blstm = scaler_y.inverse_transform(p_blstm_s)[0]
-    p_ensemble = 0.55 * p_tcn + 0.45 * p_blstm
+    p_ensemble = (0.55 * p_tcn + 0.45 * p_blstm)
 
     # GB tabular correction
     latest_lags = build_lag_features(raw_features_df).iloc[[-1]]
     if not latest_lags.empty:
         gpreds = []
-        for g in st.session_state.gbr_models:
+        for g in gbr_models:
             try:
                 gpreds.append(g.predict(latest_lags)[0])
             except Exception:
                 gpreds.append(np.nan)
         gpred = np.array(gpreds)
         if not np.isnan(gpred).any():
-            p_final = 0.6 * p_ensemble + 0.4 * gpred
+            p_final = 0.6 * p_ensemble + 0.4 * gpred  # weighted ensemble
         else:
             p_final = p_ensemble
     else:
@@ -221,8 +204,7 @@ for step in range(forecast_days):
 
     future_preds.append(p_final.tolist())
 
-   
-    # Build next raw row
+    # Build next raw row and append (minimal indicator updates)
     last_row = raw_features_df.iloc[-1].copy()
     ph, pl, pc = float(p_final[0]), float(p_final[1]), float(p_final[2])
     new_row = {}
@@ -231,58 +213,39 @@ for step in range(forecast_days):
     new_row["Low"] = pl
     new_row["Close"] = pc
     new_row["Volume"] = last_row["Volume"]
-
-    # Returns and volatility
-    close_series = pd.concat([raw_features_df["Close"], pd.Series([pc])], ignore_index=True)
-    returns_series = close_series.pct_change().fillna(0)
-    new_row["Returns"] = returns_series.iloc[-1]
+    new_row["Returns"] = (pc - last_row["Close"]) / (last_row["Close"] + 1e-12)
+    returns_series = pd.concat([raw_features_df["Returns"], pd.Series([new_row["Returns"]])], ignore_index=True)
     new_row["Volatility5"] = returns_series.tail(5).std()
-
-    # Moving averages
+    close_series = pd.concat([raw_features_df["Close"], pd.Series([pc])], ignore_index=True)
     new_row["MA10"] = close_series.tail(10).mean()
     new_row["MA20"] = close_series.tail(20).mean()
-    new_row["EMA9"] = close_series.ewm(span=9, adjust=False).mean().iloc[-1]
-
-    # Momentum and RSI
+    try:
+        new_row["EMA9"] = close_series.ewm(span=9, adjust=False).mean().iloc[-1]
+    except Exception:
+        new_row["EMA9"] = new_row["MA10"]
     new_row["Momentum"] = pc - last_row["Close"]
+    # RSI approx
     delta = close_series.diff().fillna(0)
     gain = delta.clip(lower=0).tail(14).mean()
     loss = (-delta.clip(upper=0)).tail(14).mean()
     new_row["RSI14"] = 100 - (100 / (1 + (gain / (loss + 1e-12))))
-
-    # ATR14
-    high_series = pd.concat([raw_features_df["High"], pd.Series([ph])], ignore_index=True)
-    low_series = pd.concat([raw_features_df["Low"], pd.Series([pl])], ignore_index=True)
-    prev_close_series = pd.concat([raw_features_df["Close"], pd.Series([last_row["Close"]])], ignore_index=True)
-    tr = pd.concat([high_series - low_series,
-                    (high_series - prev_close_series).abs(),
-                    (low_series - prev_close_series).abs()], axis=1).max(axis=1)
-    new_row["ATR14"] = tr.tail(14).mean()
-
-    # Bollinger Bands
+    new_row["ATR14"] = raw_features_df["ATR14"].iloc[-1] if "ATR14" in raw_features_df.columns else raw_features_df["Close"].diff().abs().rolling(14).mean().iloc[-1]
     new_row["BB_MID"] = close_series.tail(20).mean()
     new_row["BB_STD"] = close_series.tail(20).std()
     new_row["BB_UP"] = new_row["BB_MID"] + 2 * new_row["BB_STD"]
     new_row["BB_LOW"] = new_row["BB_MID"] - 2 * new_row["BB_STD"]
     new_row["BB_PCTB"] = (pc - new_row["BB_LOW"]) / (new_row["BB_UP"] - new_row["BB_LOW"] + 1e-12)
-
-    # OBV
     new_row["OBV"] = raw_features_df["OBV"].iloc[-1] + np.sign(pc - last_row["Close"]) * new_row["Volume"]
 
-    # Append new row
     raw_features_df = pd.concat([raw_features_df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # Ensure all feature columns exist and fill missing
+    # fill missing feature columns and scale the new row
     for c in features.columns:
         if c not in raw_features_df.columns:
             raw_features_df[c] = raw_features_df[c].ffill().bfill()
-
-    # Scale new row and update sequence
-    new_row_df = raw_features_df.iloc[[-1]][features.columns].ffill()
-    new_row_scaled = scaler_X.transform(new_row_df)
+    new_row_df = raw_features_df.iloc[[-1]][features.columns]
+    new_row_scaled = RobustScaler().fit(features).transform(new_row_df) if False else scaler_X.transform(new_row_df)
     current_seq = np.vstack([current_seq[1:], new_row_scaled[0]])
-
-
 
 # Build forecast DataFrame
 future_idx = pd.date_range(start=df_work.index[-1] + pd.Timedelta(days=1), periods=forecast_days, freq='B')
