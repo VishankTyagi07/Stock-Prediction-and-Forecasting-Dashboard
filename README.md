@@ -147,5 +147,12 @@ If you found this project helpful or interesting,please consider giving it a sta
 **Built with :heart: by Vishank Tyagi | December 2025**
 
 
-
 *This Project Demonstrates Skills for Model Building using Ensemble approach byt using multiple models for predictive analysis and Data Forecasting Which are very important in Data Analyst, and Data Scientist Roles*
+
+## License & Usage
+
+This project is **NOT open-source**.
+
+All rights are reserved by the author. Reuse, copying, modification,
+or redistribution of this repository or its contents is strictly
+prohibited without explicit permission.
